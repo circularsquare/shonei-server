@@ -26,8 +26,11 @@ type ChatMessage struct {
 }
 
 type OrderMessage struct {
-	From string `json:"from"`
-	Text string `json:"text"`
+    From     string `json:"from"`
+    Item     string `json:"item"`
+    Side     string `json:"side"`     // "b" or "s"
+    Price    int    `json:"price"`
+    Quantity int    `json:"quantity"`
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +140,18 @@ func (c *Client) readPump(h *Hub) {
 			payload, _ := json.Marshal(chat)
 			outEnv, _ := json.Marshal(Envelope{Type: "chat", Payload: payload})
 			h.broadcast <- outEnv
-
+		case "order":
+			var order OrderMessage
+			if err := json.Unmarshal(env.Payload, &order); err != nil {
+				log.Printf("bad order payload : %v", err)
+				continue
+			}
+			order.From = c.name
+			log.Printf("[order?] %s: %s : %d", order.From, order.Item, order.Price)
+			// rewrap and broadcast
+			payload, _ := json.Marshal(order)
+			outEnv, _ := json.Marshal(Envelope{Type: "order", Payload: payload})
+			h.broadcast <- outEnv
 		default:
 			log.Printf("Unknown message type from %s: %s", c.name, env.Type)
 		}
