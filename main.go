@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
-
+	"sort"
 	"github.com/gorilla/websocket"
 )
 
@@ -19,12 +19,10 @@ type Envelope struct {
 	Type    string          `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
-
 type ChatMessage struct {
 	From string `json:"from"`
 	Text string `json:"text"`
 }
-
 type OrderMessage struct {
     From     string `json:"from"`
     Item     string `json:"item"`
@@ -32,6 +30,7 @@ type OrderMessage struct {
     Price    int    `json:"price"`
     Quantity int    `json:"quantity"`
 }
+
 
 // ---------------------------------------------------------------------------
 // Client - one per WebSocket connection
@@ -48,11 +47,12 @@ type Client struct {
 // ---------------------------------------------------------------------------
 
 type Hub struct {
-	mu         sync.RWMutex
-	clients    map[*Client]bool // this is how to say set of clients
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
+	mu         	sync.RWMutex
+	clients    	map[*Client]bool // this is how to say set of clients
+	broadcast  	chan []byte
+	register   	chan *Client
+	unregister 	chan *Client
+	exchange 	*Exchange
 }
 
 func newHub() *Hub {
@@ -61,6 +61,7 @@ func newHub() *Hub {
 		broadcast:  make(chan []byte, 256),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
+		exchange: 	newExchange(),
 	}
 }
 
@@ -99,6 +100,78 @@ func (h *Hub) run() {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Order book stuff
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+type Order struct {
+	From     string `json:"from"`
+	Side     string `json:"side"`
+	Price    int    `json:"price"`
+	Quantity int    `json:"quantity"`
+}
+type Book struct {
+	Item   string  `json:"item"`
+	Buys   []Order `json:"buys"`  // sorted high to low (best bid first)
+	Sells  []Order `json:"sells"` // sorted low to high (best ask first)
+}
+type Exchange struct { 			// Exchange holds all books, keyed by item name.
+	books map[string]*Book
+}
+
+func (b *Book) insert (o Order) {
+	if o.Side == "b" {
+		i:= sort.Search(len(b.Buys), func(i int) bool { // ??
+			return b.Buys[i].Price < o.Price // find first price lower than o
+		})
+		b.Buys = append(b.Buys, Order{})	// lengthen list by one
+		copy(b.Buys[i+1:], b.Buys[i:]) 	// shift everything right
+		b.Buys[i] = o 					
+	} else {
+		i := sort.Search(len(b.Sells), func(i int) bool {
+			return b.Sells[i].Price > o.Price 
+		})
+		b.Sells = append(b.Sells, Order{})
+		copy(b.Sells[i+1:], b.Sells[i:])
+		b.Sells[i] = o
+	}
+}
+
+func newExchange() *Exchange {
+	return &Exchange{books: make(map[string]*Book)} 
+}
+
+func (ex *Exchange) getBook(item string) *Book {
+	if _, ok := ex.books[item]; !ok {	
+		ex.books[item] = &Book{Item: item}
+	}
+	return ex.books[item]
+}
+// TODO: placeOrder should be called from run() so that it is serialized.
+func (ex *Exchange) placeOrder (item string, o Order) {
+	book := ex.getBook(item)
+	book.insert(o)
+}
+func (ex *Exchange) printBook (item string) {
+	book := ex.getBook(item)
+	fmt.Printf("\n=== ORDER BOOK: %s ===\n", item)
+	fmt.Println("  SELLS (asks):")
+	// Print sells in reverse so highest price is on top, like a real book
+	for i := len(book.Sells) - 1; i >= 0; i-- {
+		s := book.Sells[i]
+		fmt.Printf("    %s  %d @ %d\n", s.From, s.Quantity, s.Price)
+	}
+	fmt.Println("  -----------")
+	fmt.Println("  BUYS (bids):")
+	for _, b := range book.Buys {
+		fmt.Printf("    %s  %d @ %d\n", b.From, b.Quantity, b.Price)
+	}
+	fmt.Printf("========================\n\n")
+}
+
+
+
 
 // ---------------------------------------------------------------------------
 // Client read/write pumps
@@ -147,7 +220,16 @@ func (c *Client) readPump(h *Hub) {
 				continue
 			}
 			order.From = c.name
-			log.Printf("[order?] %s: %s : %d", order.From, order.Item, order.Price)
+			log.Printf("[order] %s: %s %s %d @ %d", order.From, order.Side, order.Item, order.Quantity, order.Price)
+
+			h.exchange.placeOrder(order.Item, Order{
+				From: 	order.From,
+				Side:	order.Side,
+				Price: 	order.Price,
+				Quantity: order.Quantity,
+			})
+			h.exchange.printBook(order.Item)
+
 			// rewrap and broadcast
 			payload, _ := json.Marshal(order)
 			outEnv, _ := json.Marshal(Envelope{Type: "order", Payload: payload})
@@ -215,7 +297,7 @@ func main() {
 		serveWs(hub, w, r)
 	})
 
-	addr := ":8080"
+	addr := "127.0.0.1:8080" // the 127.0.0.1 means localhost, will need to change eventually
 	fmt.Printf("Shonei Market server starting on %s\n", addr)
 	fmt.Println("Connect with: ws://localhost:8080/ws?name=YourName")
 	log.Fatal(http.ListenAndServe(addr, nil))
