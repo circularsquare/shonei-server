@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
 	"sort"
+	"sync"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -24,13 +25,12 @@ type ChatMessage struct {
 	Text string `json:"text"`
 }
 type OrderMessage struct {
-    From     string `json:"from"`
-    Item     string `json:"item"`
-    Side     string `json:"side"`     // "b" or "s"
-    Price    int    `json:"price"`
-    Quantity int    `json:"quantity"`
+	From     string `json:"from"`
+	Item     string `json:"item"`
+	Side     string `json:"side"` // "b" or "s"
+	Price    int    `json:"price"`
+	Quantity int    `json:"quantity"`
 }
-
 
 // ---------------------------------------------------------------------------
 // Client - one per WebSocket connection
@@ -47,12 +47,12 @@ type Client struct {
 // ---------------------------------------------------------------------------
 
 type Hub struct {
-	mu         	sync.RWMutex
-	clients    	map[*Client]bool // this is how to say set of clients
-	broadcast  	chan []byte
-	register   	chan *Client
-	unregister 	chan *Client
-	exchange 	*Exchange
+	mu         sync.RWMutex
+	clients    map[*Client]bool // this is how to say set of clients
+	broadcast  chan []byte
+	register   chan *Client
+	unregister chan *Client
+	exchange   *Exchange
 }
 
 func newHub() *Hub {
@@ -61,7 +61,7 @@ func newHub() *Hub {
 		broadcast:  make(chan []byte, 256),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
-		exchange: 	newExchange(),
+		exchange:   newExchange(),
 	}
 }
 
@@ -70,7 +70,7 @@ func newHub() *Hub {
 func (h *Hub) run() {
 	for {
 		select {
-		case client := <-h.register:	
+		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true
 			h.mu.Unlock()
@@ -112,48 +112,99 @@ type Order struct {
 	Quantity int    `json:"quantity"`
 }
 type Book struct {
-	Item   string  `json:"item"`
-	Buys   []Order `json:"buys"`  // sorted high to low (best bid first)
-	Sells  []Order `json:"sells"` // sorted low to high (best ask first)
+	Item  string  `json:"item"`
+	Buys  []Order `json:"buys"`  // sorted high to low (best bid first)
+	Sells []Order `json:"sells"` // sorted low to high (best ask first)
 }
-type Exchange struct { 			// Exchange holds all books, keyed by item name.
+type Exchange struct { // Exchange holds all books, keyed by item name.
 	books map[string]*Book
 }
+type Fill struct {
+	Buyer    string `json:"buyer"`
+	Seller   string `json:"seller"`
+	Item     string `json:"item"`
+	Price    int    `json:"price"`
+	Quantity int    `json:"quantity"`
+}
 
-func (b *Book) insert (o Order) {
+func (b *Book) insert(o Order) {
 	if o.Side == "b" {
-		i:= sort.Search(len(b.Buys), func(i int) bool { // ??
+		i := sort.Search(len(b.Buys), func(i int) bool { // ??
 			return b.Buys[i].Price < o.Price // find first price lower than o
 		})
-		b.Buys = append(b.Buys, Order{})	// lengthen list by one
-		copy(b.Buys[i+1:], b.Buys[i:]) 	// shift everything right
-		b.Buys[i] = o 					
+		b.Buys = append(b.Buys, Order{}) // lengthen list by one
+		copy(b.Buys[i+1:], b.Buys[i:])   // shift everything right
+		b.Buys[i] = o
 	} else {
 		i := sort.Search(len(b.Sells), func(i int) bool {
-			return b.Sells[i].Price > o.Price 
+			return b.Sells[i].Price > o.Price
 		})
 		b.Sells = append(b.Sells, Order{})
 		copy(b.Sells[i+1:], b.Sells[i:])
 		b.Sells[i] = o
 	}
 }
+func (b *Book) match(incoming Order) []Fill {
+	var fills []Fill
+	if incoming.Side == "b" {
+		for len(b.Sells) > 0 && incoming.Quantity > 0 && b.Sells[0].Price <= incoming.Price {
+			best := &b.Sells[0]
+			fillQty := min(incoming.Quantity, best.Quantity)
+			fills = append(fills, Fill{
+				Buyer:    incoming.From,
+				Seller:   best.From,
+				Item:     b.Item,
+				Price:    best.Price,
+				Quantity: fillQty,
+			})
+			incoming.Quantity -= fillQty
+			best.Quantity -= fillQty
+			if best.Quantity == 0 {
+				b.Sells = b.Sells[1:]
+			}
+		}
+	} else {
+		for len(b.Buys) > 0 && incoming.Quantity > 0 && b.Buys[0].Price >= incoming.Price {
+			best := &b.Buys[0]
+			fillQty := min(incoming.Quantity, best.Quantity)
+			fills = append(fills, Fill{
+				Buyer:    best.From,
+				Seller:   incoming.From,
+				Item:     b.Item,
+				Price:    best.Price,
+				Quantity: fillQty,
+			})
+			incoming.Quantity -= fillQty
+			best.Quantity -= fillQty
+			if best.Quantity == 0 {
+				b.Buys = b.Buys[1:]
+			}
+		}
+
+	}
+	if incoming.Quantity > 0 {
+		b.insert(incoming)
+	}
+	return fills
+}
 
 func newExchange() *Exchange {
-	return &Exchange{books: make(map[string]*Book)} 
+	return &Exchange{books: make(map[string]*Book)}
 }
 
 func (ex *Exchange) getBook(item string) *Book {
-	if _, ok := ex.books[item]; !ok {	
+	if _, ok := ex.books[item]; !ok {
 		ex.books[item] = &Book{Item: item}
 	}
 	return ex.books[item]
 }
+
 // TODO: placeOrder should be called from run() so that it is serialized.
-func (ex *Exchange) placeOrder (item string, o Order) {
+func (ex *Exchange) placeOrder(item string, o Order) []Fill {
 	book := ex.getBook(item)
-	book.insert(o)
+	return book.match(o)
 }
-func (ex *Exchange) printBook (item string) {
+func (ex *Exchange) printBook(item string) {
 	book := ex.getBook(item)
 	fmt.Printf("\n=== ORDER BOOK: %s ===\n", item)
 	fmt.Println("  SELLS (asks):")
@@ -169,9 +220,6 @@ func (ex *Exchange) printBook (item string) {
 	}
 	fmt.Printf("========================\n\n")
 }
-
-
-
 
 // ---------------------------------------------------------------------------
 // Client read/write pumps
@@ -222,12 +270,19 @@ func (c *Client) readPump(h *Hub) {
 			order.From = c.name
 			log.Printf("[order] %s: %s %s %d @ %d", order.From, order.Side, order.Item, order.Quantity, order.Price)
 
-			h.exchange.placeOrder(order.Item, Order{
-				From: 	order.From,
-				Side:	order.Side,
-				Price: 	order.Price,
+			fills := h.exchange.placeOrder(order.Item, Order{
+				From:     order.From,
+				Side:     order.Side,
+				Price:    order.Price,
 				Quantity: order.Quantity,
 			})
+			for _, f := range fills {
+				log.Printf("[fill] %s bought %d %s from %s @ %d", f.Buyer, f.Quantity, f.Item, f.Seller, f.Price)
+				payload, _ := json.Marshal(f)
+				outEnv, _ := json.Marshal(Envelope{Type: "fill", Payload: payload})
+				h.broadcast <- outEnv
+			}
+
 			h.exchange.printBook(order.Item)
 
 			// rewrap and broadcast

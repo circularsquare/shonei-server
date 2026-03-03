@@ -12,7 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-    "strings"
+	"strings"
 
 	"github.com/gorilla/websocket"
 )
@@ -29,11 +29,18 @@ type ChatMessage struct {
 }
 
 type OrderMessage struct {
-    From     string `json:"from"`
-    Item     string `json:"item"`
-    Side     string `json:"side"`     // "b" or "s"
-    Price    int    `json:"price"`
-    Quantity int    `json:"quantity"`
+	From     string `json:"from"`
+	Item     string `json:"item"`
+	Side     string `json:"side"` // "b" or "s"
+	Price    int    `json:"price"`
+	Quantity int    `json:"quantity"`
+}
+type Fill struct {
+	Buyer    string `json:"buyer"`
+	Seller   string `json:"seller"`
+	Item     string `json:"item"`
+	Price    int    `json:"price"`
+	Quantity int    `json:"quantity"`
 }
 
 func main() {
@@ -70,6 +77,10 @@ func main() {
 				var order OrderMessage
 				json.Unmarshal(env.Payload, &order)
 				fmt.Printf("\n  [%s]: %s : %d \n> ", order.From, order.Item, order.Price)
+			case "fill":
+				var f Fill
+				json.Unmarshal(env.Payload, &f)
+				fmt.Printf("\n [fill] %s bought %d %s from %s @ %d", f.Buyer, f.Quantity, f.Item, f.Seller, f.Price)
 			default:
 				fmt.Printf("\n  (unknown type: %s) %s\n> ", env.Type, string(env.Payload))
 			}
@@ -86,28 +97,32 @@ func main() {
 			continue
 		}
 
-		var env []byte 
+		var env []byte
 
-		if strings.HasPrefix(text, "/order") {
-			// Parse: /order b wood 50 10  (side item price quantity)
+		if strings.HasPrefix(text, "/b ") || strings.HasPrefix(text, "/s ") {
+			// Parse: /b wood 10 50  or  /s wood 10 50  (item quantity price)
 			parts := strings.Fields(text)
-			if len(parts) != 5 {
-				fmt.Println("  Usage: /order <b|s> <item> <price> <quantity>")
-            	fmt.Print("> ")
-				continue
-			}
-			price, err1 := strconv.Atoi(parts[3])
-			qty, err2 := strconv.Atoi(parts[4])
-			if err1 != nil || err2 != nil {
-				fmt.Println("  Price and quantity must be numbers")
+			if len(parts) != 4 {
+				fmt.Println("  Usage: /b or /s <item> <quantity> <price>")
 				fmt.Print("> ")
 				continue
 			}
-			payload, _ := json.Marshal(OrderMessage {
-				Item: 		parts[2],
-				Side: 		parts[1],
-				Price: 		price,
-				Quantity: 	qty,
+			side := "b"
+			if parts[0] == "/s" {
+				side = "s"
+			}
+			qty, err1 := strconv.Atoi(parts[2])
+			price, err2 := strconv.Atoi(parts[3])
+			if err1 != nil || err2 != nil {
+				fmt.Println("  Quantity and price must be numbers")
+				fmt.Print("> ")
+				continue
+			}
+			payload, _ := json.Marshal(OrderMessage{
+				Item:     parts[1],
+				Side:     side,
+				Price:    price,
+				Quantity: qty,
 			})
 			env, _ = json.Marshal(Envelope{Type: "order", Payload: payload})
 			if err := conn.WriteMessage(websocket.TextMessage, env); err != nil {
@@ -122,8 +137,7 @@ func main() {
 			}
 			fmt.Print("> ")
 		}
-		
-		
+
 	}
 
 	// Graceful shutdown on Ctrl+C
