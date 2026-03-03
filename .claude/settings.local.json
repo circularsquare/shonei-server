@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build -o /tmp/server_check main.go)"
+    ]
+  }
+}

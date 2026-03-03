@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-
 	"github.com/gorilla/websocket"
 )
 
@@ -41,6 +40,20 @@ type Fill struct {
 	Item     string `json:"item"`
 	Price    int    `json:"price"`
 	Quantity int    `json:"quantity"`
+}
+type MarketQuery struct {
+	Item string `json:"item"`
+}
+type Order struct {
+	From     string `json:"from"`
+	Side     string `json:"side"`
+	Price    int    `json:"price"`
+	Quantity int    `json:"quantity"`
+}
+type Book struct {
+	Item  string  `json:"item"`
+	Buys  []Order `json:"buys"`
+	Sells []Order `json:"sells"`
 }
 
 func main() {
@@ -76,11 +89,26 @@ func main() {
 			case "order":
 				var order OrderMessage
 				json.Unmarshal(env.Payload, &order)
-				fmt.Printf("\n  [%s]: %s : %d \n> ", order.From, order.Item, order.Price)
+				fmt.Printf("\n  [%s]: placed %s %s, %d @ %d \n> ", order.From, order.Side, order.Item, order.Quantity, order.Price)
 			case "fill":
 				var f Fill
 				json.Unmarshal(env.Payload, &f)
 				fmt.Printf("\n [fill] %s bought %d %s from %s @ %d", f.Buyer, f.Quantity, f.Item, f.Seller, f.Price)
+			case "market_response":
+				var book Book
+				json.Unmarshal(env.Payload, &book)
+				fmt.Printf("\n=== ORDER BOOK: %s ===\n", book.Item)
+				fmt.Println("  SELLS (asks):")
+				for i := len(book.Sells) - 1; i >= 0; i-- {
+					s := book.Sells[i]
+					fmt.Printf("    %s  %d @ %d\n", s.From, s.Quantity, s.Price)
+				}
+				fmt.Println("  -----------")
+				fmt.Println("  BUYS (bids):")
+				for _, b := range book.Buys {
+					fmt.Printf("    %s  %d @ %d\n", b.From, b.Quantity, b.Price)
+				}
+				fmt.Printf("========================\n> ")
 			default:
 				fmt.Printf("\n  (unknown type: %s) %s\n> ", env.Type, string(env.Payload))
 			}
@@ -129,6 +157,19 @@ func main() {
 				log.Fatal("Send error:", err)
 			}
 			fmt.Print("> ")
+		} else if strings.HasPrefix(text, "/market ") {
+			parts := strings.Fields(text)
+			if len(parts) != 2 {
+				fmt.Println("  Usage: /market <item>")
+				fmt.Print("> ")
+				continue
+			}
+			payload, _ := json.Marshal(MarketQuery{Item: parts[1]})
+			env, _ = json.Marshal(Envelope{Type: "market_query", Payload: payload})
+			if err := conn.WriteMessage(websocket.TextMessage, env); err != nil {
+				log.Fatal("Send error:", err)
+			}
+			fmt.Print("> ")
 		} else {
 			payload, _ := json.Marshal(ChatMessage{Text: text})
 			env, _ = json.Marshal(Envelope{Type: "chat", Payload: payload})
@@ -137,7 +178,6 @@ func main() {
 			}
 			fmt.Print("> ")
 		}
-
 	}
 
 	// Graceful shutdown on Ctrl+C

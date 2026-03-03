@@ -126,6 +126,9 @@ type Fill struct {
 	Price    int    `json:"price"`
 	Quantity int    `json:"quantity"`
 }
+type MarketQuery struct {
+	Item string `json:"item"`
+}
 
 func (b *Book) insert(o Order) {
 	if o.Side == "b" {
@@ -289,6 +292,17 @@ func (c *Client) readPump(h *Hub) {
 			payload, _ := json.Marshal(order)
 			outEnv, _ := json.Marshal(Envelope{Type: "order", Payload: payload})
 			h.broadcast <- outEnv
+		case "market_query":
+			var query MarketQuery
+			if err := json.Unmarshal(env.Payload, &query); err != nil {
+				log.Printf("bad market_query payload: %v", err)
+				continue
+			}
+			log.Printf("[market_query] %s asked about %s", c.name, query.Item)
+			book := h.exchange.getBook(query.Item)
+			payload, _ := json.Marshal(book)
+			outEnv, _ := json.Marshal(Envelope{Type: "market_response", Payload: payload})
+			c.send <- outEnv
 		default:
 			log.Printf("Unknown message type from %s: %s", c.name, env.Type)
 		}
