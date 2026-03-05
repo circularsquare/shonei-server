@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	"github.com/gorilla/websocket"
 )
@@ -26,15 +25,11 @@ type ChatMessage struct {
 	Text string `json:"text"`
 }
 type OrderMessage struct {
-	ID       uint64 `json:"id"`
 	From     string `json:"from"`
 	Item     string `json:"item"`
 	Side     string `json:"side"` // "b" or "s"
 	Price    int    `json:"price"`
 	Quantity int    `json:"quantity"`
-}
-type CancelOrderMessage struct {
-	ID uint64 `json:"id"`
 }
 
 // ---------------------------------------------------------------------------
@@ -90,25 +85,6 @@ func (h *Hub) run() {
 			h.mu.Unlock()
 			log.Printf("Client disconnected: %s (%d total)", client.name, len(h.clients))
 
-			// Remove all open orders for this client and notify remaining clients.
-			affected := h.exchange.cancelAllOrders(client.name)
-			for _, item := range affected {
-				log.Printf("[cancel_all] removed orders for %s in %s", client.name, item)
-				book := h.exchange.getBook(item)
-				payload, _ := json.Marshal(book)
-				outEnv, _ := json.Marshal(Envelope{Type: "market_response", Payload: payload})
-				h.mu.RLock()
-				for remaining := range h.clients {
-					select {
-					case remaining.send <- outEnv:
-					default:
-						close(remaining.send)
-						delete(h.clients, remaining)
-					}
-				}
-				h.mu.RUnlock()
-			}
-
 		case msg := <-h.broadcast:
 			h.mu.RLock()
 			for client := range h.clients {
@@ -130,7 +106,6 @@ func (h *Hub) run() {
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 type Order struct {
-	ID       uint64 `json:"id"`
 	From     string `json:"from"`
 	Side     string `json:"side"`
 	Price    int    `json:"price"`
@@ -142,8 +117,7 @@ type Book struct {
 	Sells []Order `json:"sells"` // sorted low to high (best ask first)
 }
 type Exchange struct { // Exchange holds all books, keyed by item name.
-	books  map[string]*Book
-	nextID uint64 // atomically incremented; never zero after first order
+	books map[string]*Book
 }
 type Fill struct {
 	Buyer    string `json:"buyer"`
@@ -217,32 +191,6 @@ func (b *Book) match(incoming Order) []Fill {
 	return fills
 }
 
-// cancelOrderByID removes the order with the given ID if it belongs to `from`.
-// Returns the item name and true on success, empty string and false otherwise.
-func (ex *Exchange) cancelOrderByID(id uint64, from string) (string, bool) {
-	for item, book := range ex.books {
-		for i, o := range book.Buys {
-			if o.ID == id {
-				if o.From != from {
-					return "", false // not the owner
-				}
-				book.Buys = append(book.Buys[:i], book.Buys[i+1:]...)
-				return item, true
-			}
-		}
-		for i, o := range book.Sells {
-			if o.ID == id {
-				if o.From != from {
-					return "", false // not the owner
-				}
-				book.Sells = append(book.Sells[:i], book.Sells[i+1:]...)
-				return item, true
-			}
-		}
-	}
-	return "", false
-}
-
 func newExchange() *Exchange {
 	return &Exchange{books: make(map[string]*Book)}
 }
@@ -255,43 +203,10 @@ func (ex *Exchange) getBook(item string) *Book {
 }
 
 // TODO: placeOrder should be called from run() so that it is serialized.
-// Returns the fills and the ID assigned to this order (0 if fully filled immediately).
-func (ex *Exchange) placeOrder(item string, o Order) ([]Fill, uint64) {
-	o.ID = atomic.AddUint64(&ex.nextID, 1)
+func (ex *Exchange) placeOrder(item string, o Order) []Fill {
 	book := ex.getBook(item)
-	return book.match(o), o.ID
+	return book.match(o)
 }
-// cancelAllOrders removes every order placed by `from` across all books.
-// Returns the list of item names whose books were modified.
-func (ex *Exchange) cancelAllOrders(from string) []string {
-	var affected []string
-	for item, book := range ex.books {
-		changed := false
-		var newBuys []Order
-		for _, o := range book.Buys {
-			if o.From == from {
-				changed = true
-			} else {
-				newBuys = append(newBuys, o)
-			}
-		}
-		var newSells []Order
-		for _, o := range book.Sells {
-			if o.From == from {
-				changed = true
-			} else {
-				newSells = append(newSells, o)
-			}
-		}
-		if changed {
-			book.Buys = newBuys
-			book.Sells = newSells
-			affected = append(affected, item)
-		}
-	}
-	return affected
-}
-
 func (ex *Exchange) printBook(item string) {
 	book := ex.getBook(item)
 	fmt.Printf("\n=== ORDER BOOK: %s ===\n", item)
@@ -358,13 +273,12 @@ func (c *Client) readPump(h *Hub) {
 			order.From = c.name
 			log.Printf("[order] %s: %s %s %d @ %d", order.From, order.Side, order.Item, order.Quantity, order.Price)
 
-			fills, orderID := h.exchange.placeOrder(order.Item, Order{
+			fills := h.exchange.placeOrder(order.Item, Order{
 				From:     order.From,
 				Side:     order.Side,
 				Price:    order.Price,
 				Quantity: order.Quantity,
 			})
-			order.ID = orderID
 			for _, f := range fills {
 				log.Printf("[fill] %s bought %d %s from %s @ %d", f.Buyer, f.Quantity, f.Item, f.Seller, f.Price)
 				payload, _ := json.Marshal(f)
@@ -374,24 +288,10 @@ func (c *Client) readPump(h *Hub) {
 
 			h.exchange.printBook(order.Item)
 
-			// rewrap and broadcast (includes the assigned order ID)
+			// rewrap and broadcast
 			payload, _ := json.Marshal(order)
 			outEnv, _ := json.Marshal(Envelope{Type: "order", Payload: payload})
 			h.broadcast <- outEnv
-		case "cancel_order":
-			var cancel CancelOrderMessage
-			if err := json.Unmarshal(env.Payload, &cancel); err != nil {
-				log.Printf("bad cancel_order payload: %v", err)
-				continue
-			}
-			item, removed := h.exchange.cancelOrderByID(cancel.ID, c.name)
-			log.Printf("[cancel_order] %s cancelled order %d (found=%v)", c.name, cancel.ID, removed)
-			if removed {
-				book := h.exchange.getBook(item)
-				payload, _ := json.Marshal(book)
-				outEnv, _ := json.Marshal(Envelope{Type: "market_response", Payload: payload})
-				c.send <- outEnv
-			}
 		case "market_query":
 			var query MarketQuery
 			if err := json.Unmarshal(env.Payload, &query); err != nil {
