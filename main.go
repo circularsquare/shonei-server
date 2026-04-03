@@ -146,6 +146,7 @@ type Book struct {
 	Sells []Order `json:"sells"` // sorted low to high (best ask first)
 }
 type Exchange struct { // Exchange holds all books, keyed by item name.
+	mu     sync.Mutex
 	books  map[string]*Book
 	nextID uint64 // atomically incremented; never zero after first order
 }
@@ -224,6 +225,8 @@ func (b *Book) match(incoming Order) []Fill {
 // cancelOrderByID removes the order with the given ID if it belongs to `from`.
 // Returns the item name and true on success, empty string and false otherwise.
 func (ex *Exchange) cancelOrderByID(id uint64, from string) (string, bool) {
+	ex.mu.Lock()
+	defer ex.mu.Unlock()
 	for item, book := range ex.books {
 		for i, o := range book.Buys {
 			if o.ID == id {
@@ -251,23 +254,47 @@ func newExchange() *Exchange {
 	return &Exchange{books: make(map[string]*Book)}
 }
 
-func (ex *Exchange) getBook(item string) *Book {
+// getBookLocked returns (or creates) the live Book. Caller must hold ex.mu.
+func (ex *Exchange) getBookLocked(item string) *Book {
 	if _, ok := ex.books[item]; !ok {
 		ex.books[item] = &Book{Item: item}
 	}
 	return ex.books[item]
 }
 
-// TODO: placeOrder should be called from run() so that it is serialized.
+// getBook returns a snapshot of the book safe to read without holding the lock.
+func (ex *Exchange) getBook(item string) *Book {
+	ex.mu.Lock()
+	defer ex.mu.Unlock()
+	b := ex.getBookLocked(item)
+	return &Book{
+		Item:  b.Item,
+		Buys:  append([]Order(nil), b.Buys...),
+		Sells: append([]Order(nil), b.Sells...),
+	}
+}
+
 // Returns the fills and the ID assigned to this order (0 if fully filled immediately).
 func (ex *Exchange) placeOrder(item string, o Order) ([]Fill, uint64) {
 	o.ID = atomic.AddUint64(&ex.nextID, 1)
-	book := ex.getBook(item)
+	ex.mu.Lock()
+	defer ex.mu.Unlock()
+	book := ex.getBookLocked(item)
 	return book.match(o), o.ID
 }
 // cancelAllOrders removes every order placed by `from` across all books.
 // Returns the list of item names whose books were modified.
 func (ex *Exchange) cancelAllOrders(from string) []string {
+	ex.mu.Lock()
+	defer ex.mu.Unlock()
+	affected := ex.cancelAllOrdersLocked(from)
+	if len(affected) > 0 {
+		log.Printf("[cancel_all] removed orders for %s from books: %v", from, affected)
+	}
+	return affected
+}
+
+func (ex *Exchange) cancelAllOrdersLocked(from string) []string {
 	var affected []string
 	for item, book := range ex.books {
 		changed := false
@@ -295,6 +322,7 @@ func (ex *Exchange) cancelAllOrders(from string) []string {
 	}
 	return affected
 }
+
 
 func (ex *Exchange) printBook(item string) {
 	book := ex.getBook(item)

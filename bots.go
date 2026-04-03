@@ -61,35 +61,37 @@ func (t *DynamicTrader) buyPrice() int {
 	return t.sellPrice() / 2
 }
 
-// refreshOrders cancels all existing orders and re-places them at current prices.
-// Any fills against player standing orders are broadcast to all clients.
+// refreshOrders atomically cancels all existing orders and re-places them at
+// current prices. Any fills against player standing orders are broadcast.
 func (t *DynamicTrader) refreshOrders() {
-	t.exchange.cancelAllOrders(t.name)
-
 	sp := t.sellPrice()
 	bp := t.buyPrice()
 
-	var allFills []Fill
-
+	var orders []Order
 	if t.stock >= t.showSize {
-		fills, _ := t.exchange.placeOrder(t.item, Order{
-			From:     t.name,
-			Side:     "s",
-			Price:    sp,
-			Quantity: t.showSize,
-			ClientType:     "bot",
+		orders = append(orders, Order{
+			From:       t.name,
+			Side:       "s",
+			Price:      sp,
+			Quantity:   t.showSize,
+			ClientType: "bot",
 		})
+	}
+	orders = append(orders, Order{
+		From:       t.name,
+		Side:       "b",
+		Price:      bp,
+		Quantity:   t.showSize,
+		ClientType: "bot",
+	})
+
+	t.exchange.cancelAllOrders(t.name)
+	var allFills []Fill
+	for _, o := range orders {
+		fills, _ := t.exchange.placeOrder(t.item, o)
 		allFills = append(allFills, fills...)
 	}
-
-	fills, _ := t.exchange.placeOrder(t.item, Order{
-		From:     t.name,
-		Side:     "b",
-		Price:    bp,
-		Quantity: t.showSize,
-		ClientType:     "bot",
-	})
-	allFills = append(allFills, fills...)
+	log.Printf("[bot] %s/%s: stock=%d sp=%d bp=%d placing=%d fills=%d", t.name, t.item, t.stock, sp, bp, len(orders), len(allFills))
 
 	// Broadcast any fills that happened against player standing orders
 	if t.hub != nil && len(allFills) > 0 {
@@ -105,7 +107,6 @@ func (t *DynamicTrader) refreshOrders() {
 		bookEnv, _ := json.Marshal(Envelope{Type: "market_response", Payload: bookPayload})
 		t.hub.broadcast <- bookEnv
 	}
-
 }
 
 // onFill adjusts stock when a trade involves this trader, then refreshes orders.
@@ -159,6 +160,7 @@ func (t *DynamicTrader) startFarming() {
 		for range ticker.C {
 			t.mu.Lock()
 			delta := t.stockDelta()
+			log.Printf("[farming] %s/%s tick: stock=%d delta=%d", t.name, t.item, t.stock, delta)
 			t.stock += delta
 			if t.stock < 0 {
 				t.stock = 0
