@@ -36,6 +36,9 @@ type OrderMessage struct {
 type CancelOrderMessage struct {
 	ID uint64 `json:"id"`
 }
+type StockQueryMessage struct {
+	Name string `json:"name"`
+}
 
 // ---------------------------------------------------------------------------
 // Client - one per WebSocket connection
@@ -135,6 +138,7 @@ type Order struct {
 	Side     string `json:"side"`
 	Price    int    `json:"price"`
 	Quantity int    `json:"quantity"`
+	ClientType     string `json:"client_type"` // "bot" or "player"
 }
 type Book struct {
 	Item  string  `json:"item"`
@@ -356,6 +360,10 @@ func (c *Client) readPump(h *Hub) {
 				continue
 			}
 			order.From = c.name
+			if order.Quantity <= 0 || order.Quantity%100 != 0 {
+				log.Printf("[order] rejected %s: quantity %d not a positive multiple of 100", c.name, order.Quantity)
+				continue
+			}
 			log.Printf("[order] %s: %s %s %d @ %d", order.From, order.Side, order.Item, order.Quantity, order.Price)
 
 			fills, orderID := h.exchange.placeOrder(order.Item, Order{
@@ -363,6 +371,7 @@ func (c *Client) readPump(h *Hub) {
 				Side:     order.Side,
 				Price:    order.Price,
 				Quantity: order.Quantity,
+				ClientType:     "player",
 			})
 			order.ID = orderID
 			for _, f := range fills {
@@ -370,14 +379,24 @@ func (c *Client) readPump(h *Hub) {
 				payload, _ := json.Marshal(f)
 				outEnv, _ := json.Marshal(Envelope{Type: "fill", Payload: payload})
 				h.broadcast <- outEnv
+				handleFillForTraders(f)
 			}
 
 			h.exchange.printBook(order.Item)
+
+			// Broadcast updated book so all clients refresh their market panel
+			if len(fills) > 0 {
+				book := h.exchange.getBook(order.Item)
+				bookPayload, _ := json.Marshal(book)
+				bookEnv, _ := json.Marshal(Envelope{Type: "market_response", Payload: bookPayload})
+				h.broadcast <- bookEnv
+			}
 
 			// rewrap and broadcast (includes the assigned order ID)
 			payload, _ := json.Marshal(order)
 			outEnv, _ := json.Marshal(Envelope{Type: "order", Payload: payload})
 			h.broadcast <- outEnv
+
 		case "cancel_order":
 			var cancel CancelOrderMessage
 			if err := json.Unmarshal(env.Payload, &cancel); err != nil {
@@ -403,6 +422,18 @@ func (c *Client) readPump(h *Hub) {
 			payload, _ := json.Marshal(book)
 			outEnv, _ := json.Marshal(Envelope{Type: "market_response", Payload: payload})
 			c.send <- outEnv
+		case "stock_query":
+			var sq StockQueryMessage
+			if err := json.Unmarshal(env.Payload, &sq); err != nil {
+				log.Printf("bad stock_query payload: %v", err)
+				continue
+			}
+			info := getTraderStock(sq.Name)
+			if info != nil {
+				payload, _ := json.Marshal(info)
+				outEnv, _ := json.Marshal(Envelope{Type: "stock_response", Payload: payload})
+				c.send <- outEnv
+			}
 		default:
 			log.Printf("Unknown message type from %s: %s", c.name, env.Type)
 		}
@@ -461,12 +492,13 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 func main() {
 	hub := newHub()
 	go hub.run()
+	initDynamicTraders(hub.exchange, hub)
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
 	})
 
-	addr := "127.0.0.1:8080" // the 127.0.0.1 means localhost, will need to change eventually
+	addr := "127.0.0.1:8082" // the 127.0.0.1 means localhost, will need to change eventually
 	fmt.Printf("Shonei Market server starting on %s\n", addr)
 	fmt.Println("Connect with: ws://localhost:8080/ws?name=YourName")
 	log.Fatal(http.ListenAndServe(addr, nil))

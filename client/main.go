@@ -58,7 +58,7 @@ type Book struct {
 
 func main() {
 	name := flag.String("name", "Mouse", "Your player name")
-	addr := flag.String("addr", "localhost:8080", "Server address")
+	addr := flag.String("addr", "localhost:8082", "Server address")
 	flag.Parse()
 
 	url := fmt.Sprintf("ws://%s/ws?name=%s", *addr, *name)
@@ -109,6 +109,17 @@ func main() {
 					fmt.Printf("    %s  %d @ %d\n", b.From, b.Quantity, b.Price)
 				}
 				fmt.Printf("========================\n> ")
+			case "stock_response":
+				var info struct {
+					Name      string `json:"name"`
+					Item      string `json:"item"`
+					Stock     int    `json:"stock"`
+					SellPrice int    `json:"sell_price"`
+					BuyPrice  int    `json:"buy_price"`
+				}
+				json.Unmarshal(env.Payload, &info)
+				fmt.Printf("\n  [stock] %s (%s): stock=%d sell@%d buy@%d\n> ",
+					info.Name, info.Item, info.Stock, info.SellPrice, info.BuyPrice)
 			default:
 				fmt.Printf("\n  (unknown type: %s) %s\n> ", env.Type, string(env.Payload))
 			}
@@ -153,6 +164,21 @@ func main() {
 				Quantity: qty,
 			})
 			env, _ = json.Marshal(Envelope{Type: "order", Payload: payload})
+			if err := conn.WriteMessage(websocket.TextMessage, env); err != nil {
+				log.Fatal("Send error:", err)
+			}
+			fmt.Print("> ")
+		} else if strings.HasPrefix(text, "/stock ") {
+			parts := strings.Fields(text)
+			if len(parts) != 2 {
+				fmt.Println("  Usage: /stock <trader_name>")
+				fmt.Print("> ")
+				continue
+			}
+			payload, _ := json.Marshal(struct {
+				Name string `json:"name"`
+			}{Name: parts[1]})
+			env, _ = json.Marshal(Envelope{Type: "stock_query", Payload: payload})
 			if err := conn.WriteMessage(websocket.TextMessage, env); err != nil {
 				log.Fatal("Send error:", err)
 			}

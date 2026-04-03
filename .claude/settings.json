@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/anita/projects/shonei/**)",
+      "Bash(go build:*)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\anita\\projects\\shonei\\Assets\\Controller",
+      "c:\\Users\\anita\\projects\\shonei"
+    ]
+  }
+}

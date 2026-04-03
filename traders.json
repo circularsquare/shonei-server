@@ -1,0 +1,50 @@
+[
+  {
+    "name": "fulan",
+    "item": "soybeans",
+    "stock": 2000,
+    "default_stock": 2000,
+    "default_price": 20,
+    "min_price": 10,
+    "max_price": 60,
+    "show_size": 500,
+    "max_stock_gain": 100,
+    "max_stock_loss": 50
+  },
+  {
+    "name": "fulan",
+    "item": "ramie",
+    "stock": 2000,
+    "default_stock": 2000,
+    "default_price": 20,
+    "min_price": 10,
+    "max_price": 60,
+    "show_size": 500,
+    "max_stock_gain": 100,
+    "max_stock_loss": 50
+  },
+  {
+    "name": "fulan",
+    "item": "wheat",
+    "stock": 2000,
+    "default_stock": 2000,
+    "default_price": 20,
+    "min_price": 10,
+    "max_price": 60,
+    "show_size": 500,
+    "max_stock_gain": 100,
+    "max_stock_loss": 50
+  },
+  {
+    "name": "nachria",
+    "item": "cheese",
+    "stock": 1000,
+    "default_stock": 1000,
+    "default_price": 50,
+    "min_price": 25,
+    "max_price": 250,
+    "show_size": 200,
+    "max_stock_gain": 40,
+    "max_stock_loss": 40
+  }
+]
