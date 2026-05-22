@@ -16,7 +16,7 @@ This is the Go WebSocket server for the Shonei game. For full game context, read
 All prices and quantities on the wire and in server code are **fen** (`int`, 100 fen = 1 liang). The Unity client converts liang ↔ fen at the UI boundary. The CLI test client also uses fen directly.
 
 ### Server address
-The server listens on `127.0.0.1:8082`. The Unity client (`TradingClient.cs`) and `startserver.sh` (in `../shonei/`) both expect this port.
+The server listens on `127.0.0.1:8083`. The Unity client (`TradingClient.cs`) and `startserver.sh` (in `../shonei/`) both expect this port. Port 8082 is reserved for the MCP for Unity bridge, which Unity launches at startup — don't move the server back there.
 
 ### Envelope pattern
 Every WebSocket message is `{"type": "...", "payload": {...}}`. To add a new message type, add a struct, then a `case` in the `readPump` switch.
@@ -30,3 +30,4 @@ NPC nations with internal inventory that affects pricing. They run server-side w
 - **Farming equilibrium**: a ticker adjusts stock toward `defaultStock` — gaining stock when below equilibrium (high prices), losing stock when above (low prices).
 - **Order refresh**: after every fill involving a bot or on each farming tick, old orders are cancelled and re-placed at current prices. `showSize` controls the quantity shown on each order.
 - **`client_type` field**: every `Order` carries a `client_type` of `"bot"` or `"player"` so clients can distinguish them visually.
+- **Stock persistence**: `saveTraderStock` writes every trader's `stock` to `traderstock.json` (gitignored, atomic temp+rename) on the price-logging ticker. `initDynamicTraders` loads it at startup — a saved `stock` overrides the `traders.json` baseline for that `name`+`item`, so a restart resumes prices. Only `stock` is restored; pricing config stays in `traders.json`.

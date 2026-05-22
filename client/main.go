@@ -58,7 +58,7 @@ type Book struct {
 
 func main() {
 	name := flag.String("name", "Mouse", "Your player name")
-	addr := flag.String("addr", "localhost:8082", "Server address")
+	addr := flag.String("addr", "localhost:8083", "Server address")
 	flag.Parse()
 
 	url := fmt.Sprintf("ws://%s/ws?name=%s", *addr, *name)

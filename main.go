@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -39,6 +40,19 @@ type CancelOrderMessage struct {
 type StockQueryMessage struct {
 	Name string `json:"name"`
 }
+type PriceHistoryQuery struct {
+	Item      string `json:"item"`
+	RangeSec  int64  `json:"rangeSec"`  // window length: how far back to show
+	BucketSec int64  `json:"bucketSec"` // downsample bucket width
+}
+type PriceHistoryResponse struct {
+	Item      string        `json:"item"`
+	RangeSec  int64         `json:"rangeSec"`
+	BucketSec int64         `json:"bucketSec"`
+	StartSec  int64         `json:"startSec"` // window start, unix sec — axis left edge
+	EndSec    int64         `json:"endSec"`   // window end, unix sec — axis right edge
+	Samples   []PriceSample `json:"samples"`
+}
 
 // ---------------------------------------------------------------------------
 // Client - one per WebSocket connection
@@ -61,6 +75,7 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 	exchange   *Exchange
+	priceHistory *PriceHistory
 }
 
 func newHub() *Hub {
@@ -70,6 +85,7 @@ func newHub() *Hub {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		exchange:   newExchange(),
+		priceHistory: loadPriceHistory(),
 	}
 }
 
@@ -287,11 +303,7 @@ func (ex *Exchange) placeOrder(item string, o Order) ([]Fill, uint64) {
 func (ex *Exchange) cancelAllOrders(from string) []string {
 	ex.mu.Lock()
 	defer ex.mu.Unlock()
-	affected := ex.cancelAllOrdersLocked(from)
-	if len(affected) > 0 {
-		log.Printf("[cancel_all] removed orders for %s from books: %v", from, affected)
-	}
-	return affected
+	return ex.cancelAllOrdersLocked(from)
 }
 
 func (ex *Exchange) cancelAllOrdersLocked(from string) []string {
@@ -321,6 +333,27 @@ func (ex *Exchange) cancelAllOrdersLocked(from string) []string {
 		}
 	}
 	return affected
+}
+
+// cancelOrdersForItem removes all orders placed by `from` in a single item's book.
+func (ex *Exchange) cancelOrdersForItem(from, item string) {
+	ex.mu.Lock()
+	defer ex.mu.Unlock()
+	book := ex.getBookLocked(item)
+	var newBuys []Order
+	for _, o := range book.Buys {
+		if o.From != from {
+			newBuys = append(newBuys, o)
+		}
+	}
+	var newSells []Order
+	for _, o := range book.Sells {
+		if o.From != from {
+			newSells = append(newSells, o)
+		}
+	}
+	book.Buys = newBuys
+	book.Sells = newSells
 }
 
 
@@ -462,6 +495,32 @@ func (c *Client) readPump(h *Hub) {
 				outEnv, _ := json.Marshal(Envelope{Type: "stock_response", Payload: payload})
 				c.send <- outEnv
 			}
+		case "price_history_query":
+			var query PriceHistoryQuery
+			if err := json.Unmarshal(env.Payload, &query); err != nil {
+				log.Printf("bad price_history_query payload: %v", err)
+				continue
+			}
+			rangeSec, bucketSec := query.RangeSec, query.BucketSec
+			if rangeSec <= 0 {
+				rangeSec = 3600 // default: past hour
+			}
+			if bucketSec <= 0 {
+				bucketSec = 60
+			}
+			now := time.Now().Unix()
+			start := now - rangeSec
+			resp := PriceHistoryResponse{
+				Item:      query.Item,
+				RangeSec:  rangeSec,
+				BucketSec: bucketSec,
+				StartSec:  start,
+				EndSec:    now,
+				Samples:   downsample(h.priceHistory.snapshot(query.Item), start, now, bucketSec),
+			}
+			payload, _ := json.Marshal(resp)
+			outEnv, _ := json.Marshal(Envelope{Type: "price_history_response", Payload: payload})
+			c.send <- outEnv
 		default:
 			log.Printf("Unknown message type from %s: %s", c.name, env.Type)
 		}
@@ -521,13 +580,14 @@ func main() {
 	hub := newHub()
 	go hub.run()
 	initDynamicTraders(hub.exchange, hub)
+	startPriceLogging(hub)
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
 	})
 
-	addr := "127.0.0.1:8082" // the 127.0.0.1 means localhost, will need to change eventually
+	addr := "127.0.0.1:8083" // the 127.0.0.1 means localhost, will need to change eventually
 	fmt.Printf("Shonei Market server starting on %s\n", addr)
-	fmt.Println("Connect with: ws://localhost:8080/ws?name=YourName")
+	fmt.Println("Connect with: ws://localhost:8083/ws?name=YourName")
 	log.Fatal(http.ListenAndServe(addr, nil))
 }

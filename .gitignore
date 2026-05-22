@@ -1,0 +1,5 @@
+# Runtime stores written by the price-logging ticker
+pricelog.json
+pricelog.json.tmp
+traderstock.json
+traderstock.json.tmp

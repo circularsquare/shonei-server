@@ -36,6 +36,18 @@
     "max_stock_loss": 50
   },
   {
+    "name": "fulan",
+    "item": "bamboo",
+    "stock": 2000,
+    "default_stock": 2000,
+    "default_price": 20,
+    "min_price": 10,
+    "max_price": 60,
+    "show_size": 500,
+    "max_stock_gain": 100,
+    "max_stock_loss": 50
+  },
+  {
     "name": "nachria",
     "item": "cheese",
     "stock": 1000,
@@ -46,5 +58,89 @@
     "show_size": 200,
     "max_stock_gain": 40,
     "max_stock_loss": 40
+  },
+  {
+    "name": "nachria",
+    "item": "apple",
+    "stock": 1000,
+    "default_stock": 1000,
+    "default_price": 30,
+    "min_price": 15,
+    "max_price": 100,
+    "show_size": 200,
+    "max_stock_gain": 40,
+    "max_stock_loss": 40
+  },
+  {
+    "name": "nachria",
+    "item": "rice wine",
+    "stock": 800,
+    "default_stock": 800,
+    "default_price": 100,
+    "min_price": 50,
+    "max_price": 350,
+    "show_size": 200,
+    "max_stock_gain": 40,
+    "max_stock_loss": 40
+  },
+  {
+    "name": "trapzon",
+    "item": "coal",
+    "stock": 2000,
+    "default_stock": 2000,
+    "default_price": 30,
+    "min_price": 15,
+    "max_price": 90,
+    "show_size": 500,
+    "max_stock_gain": 100,
+    "max_stock_loss": 50
+  },
+  {
+    "name": "trapzon",
+    "item": "iron ore",
+    "stock": 1500,
+    "default_stock": 1500,
+    "default_price": 50,
+    "min_price": 25,
+    "max_price": 150,
+    "show_size": 400,
+    "max_stock_gain": 80,
+    "max_stock_loss": 40
+  },
+  {
+    "name": "trapzon",
+    "item": "iron",
+    "stock": 800,
+    "default_stock": 800,
+    "default_price": 120,
+    "min_price": 60,
+    "max_price": 400,
+    "show_size": 200,
+    "max_stock_gain": 40,
+    "max_stock_loss": 30
+  },
+  {
+    "name": "trapzon",
+    "item": "jade",
+    "stock": 500,
+    "default_stock": 500,
+    "default_price": 200,
+    "min_price": 100,
+    "max_price": 600,
+    "show_size": 100,
+    "max_stock_gain": 25,
+    "max_stock_loss": 20
+  },
+  {
+    "name": "corcyros",
+    "item": "tools",
+    "stock": 600,
+    "default_stock": 600,
+    "default_price": 80,
+    "min_price": 40,
+    "max_price": 200,
+    "show_size": 150,
+    "max_stock_gain": 30,
+    "max_stock_loss": 20
   }
 ]
