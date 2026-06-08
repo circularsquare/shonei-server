@@ -1,0 +1,15 @@
+# Caddy reverse-proxy + automatic TLS for the Shonei market server.
+#
+# Caddy fetches a Let's Encrypt cert for it automatically (needs ports 80+443
+# open and the subdomain's DNS A record pointing at this server — set it to
+# "DNS only" / grey-cloud in Cloudflare, NOT proxied/orange-cloud).
+#
+# reverse_proxy transparently handles the WebSocket upgrade in Caddy v2 — no
+# extra config needed. The Go server stays on localhost:8083; only Caddy is
+# exposed to the internet.
+
+market.anita.garden {
+    # 127.0.0.1, not "localhost": the Go server binds IPv4 localhost only, and
+    # "localhost" can resolve to IPv6 [::1] first, giving a spurious 502.
+    reverse_proxy 127.0.0.1:8083
+}

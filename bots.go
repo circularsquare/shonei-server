@@ -58,7 +58,7 @@ func (t *DynamicTrader) sellPrice() int {
 }
 
 func (t *DynamicTrader) buyPrice() int {
-	return t.sellPrice() / 2
+	return t.sellPrice() / 4
 }
 
 // refreshOrders atomically cancels all existing orders and re-places them at

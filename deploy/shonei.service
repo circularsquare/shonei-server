@@ -1,0 +1,16 @@
+[Unit]
+Description=Shonei Market Server
+After=network.target
+
+[Service]
+# WorkingDirectory is load-bearing: the server reads/writes traders.json,
+# pricelog.json and traderstock.json by RELATIVE path. This pins where those
+# land. Without it, state would be written to / and traders.json wouldn't load.
+WorkingDirectory=/opt/shonei
+ExecStart=/opt/shonei/shonei-market-linux
+Restart=always
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target
