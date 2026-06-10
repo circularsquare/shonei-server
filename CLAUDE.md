@@ -24,6 +24,9 @@ Every WebSocket message is `{"type": "...", "payload": {...}}`. To add a new mes
 ### Hub + Client pattern
 Clients never talk directly — they send to the Hub via channels, and the Hub broadcasts. Each client gets two goroutines (readPump, writePump).
 
+### Auth (auth.go)
+Username/password accounts: `POST /register` + `POST /login` (JSON) issue an HMAC-signed token; `serveWs` trades `?token=` for the connection's identity via `authenticateWs`. When `SHONEI_SECRET` is unset the server runs **insecure dev mode** — `?name=` is accepted so the CLI test client works. Identity is the lowercased username; NPC trader names are reserved against registration. Tokens are stateless (no revocation before 30-day expiry). Full roadmap: `../shonei/.claude/.../plans/account-system.md` (this is Phase 0; client login + account-owned saves are later).
+
 ### Dynamic traders (bots.go)
 NPC nations with internal inventory that affects pricing. They run server-side with direct Exchange access. Key mechanics:
 - **Stock-based pricing**: sell price scales inversely with stock (`min(maxPrice, defaultPrice * defaultStock / stock + minPrice)`), buy price is `sellPrice / 4`.

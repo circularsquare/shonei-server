@@ -4,9 +4,15 @@ After=network.target
 
 [Service]
 # WorkingDirectory is load-bearing: the server reads/writes traders.json,
-# pricelog.json and traderstock.json by RELATIVE path. This pins where those
-# land. Without it, state would be written to / and traders.json wouldn't load.
+# pricelog.json, traderstock.json and accounts.json by RELATIVE path. This pins
+# where those land. Without it, state would be written to / and traders.json
+# wouldn't load.
 WorkingDirectory=/opt/shonei
+# The HMAC signing secret for auth tokens lives in this box-local file (NOT in
+# the repo). It must define SHONEI_SECRET=<long random string>. Required (no '-'
+# prefix): if it's missing the unit fails to start rather than silently running
+# the public server in insecure ?name= mode. One-time setup, see deploy/README.md.
+EnvironmentFile=/opt/shonei/shonei.env
 ExecStart=/opt/shonei/shonei-market-linux
 Restart=always
 RestartSec=2

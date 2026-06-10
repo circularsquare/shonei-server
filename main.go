@@ -548,10 +548,12 @@ var upgrader = websocket.Upgrader{
 }
 
 func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
-	// Get player name from query param: ws://localhost:8080/ws?name=PlayerOne
-	name := r.URL.Query().Get("name")
-	if name == "" {
-		name = "anonymous"
+	// Resolve identity from the auth token (?token=), or ?name= in insecure dev
+	// mode. Reject before upgrading so a bad/missing token never opens a socket.
+	name, ok := authenticateWs(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -580,10 +582,30 @@ func main() {
 	hub := newHub()
 	go hub.run()
 	initDynamicTraders(hub.exchange, hub)
+	initAuth()           // load accounts + resolve signing secret / dev mode
+	initReservedNames()  // block registering NPC trader names (needs traders loaded)
+	initSaves()          // resolve cloud-save store dir (see saves.go)
 	startPriceLogging(hub)
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
+	})
+
+	// Account auth (plain HTTP JSON, fronted by Caddy TLS). See auth.go.
+	http.HandleFunc("/register", handleRegister)
+	http.HandleFunc("/login", handleLogin)
+
+	// Account-owned cloud saves (token-authed HTTP, blobs over HTTP not WS). See saves.go.
+	http.HandleFunc("/saves", handleSavesList)
+	http.HandleFunc("/save", handleSave)
+
+	// Liveness probe for external uptime monitoring (UptimeRobot). A 200 here
+	// means the whole chain is alive — box, Caddy, and this process — since the
+	// request was proxied through to the Go server. If the process were dead,
+	// Caddy would return 502 instead.
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
 	})
 
 	addr := "127.0.0.1:8083" // the 127.0.0.1 means localhost, will need to change eventually

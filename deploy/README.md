@@ -34,6 +34,12 @@ update workflow (rebuild + upload + restart; live market data is preserved):
 ssh root@5.161.112.237
 ```
 
+> **On Git Bash / MINGW (Windows):** plain `ssh` connects but accepts no keyboard
+> input — it looks frozen at the prompt because MINGW doesn't give the session a
+> PTY. Use `winpty ssh root@5.161.112.237` instead. Or skip the interactive shell
+> entirely and run one-shot commands, which need no PTY:
+> `ssh root@5.161.112.237 "systemctl status shonei --no-pager"`.
+
 **Once SSH'd in** — `systemctl` talks to systemd; the service is named `shonei`:
 ```bash
 systemctl status shonei      # is it alive? running/stopped + recent logs
@@ -116,13 +122,35 @@ path just isn't `/ws`).
 
 ---
 
+## Auth secret (one-time, required)
+
+The server signs login tokens with an HMAC secret read from `SHONEI_SECRET`,
+supplied via `/opt/shonei/shonei.env` (referenced by `shonei.service`, kept off
+git). **The unit will not start without it** — deliberate, so the public server
+never silently falls back to insecure `?name=` mode. Set it up once:
+
+```bash
+# On the box. Generate a long random secret and write the env file.
+echo "SHONEI_SECRET=$(openssl rand -hex 32)" > /opt/shonei/shonei.env
+chmod 600 /opt/shonei/shonei.env
+```
+
+If you change `deploy/shonei.service`, re-copy it to
+`/etc/systemd/system/shonei.service` and `systemctl daemon-reload` (the deploy
+script does NOT touch the unit file — that's one-time bootstrap).
+
+Locally (no `SHONEI_SECRET`), the server runs in **insecure dev mode**: it still
+accepts `?name=` so the CLI test client works, and logs a loud warning.
+
 ## Routine redeploys
 
 Just run `.\deploy\deploy.ps1` again. It stops the service, uploads the new
-binary + `traders.json`, and restarts. **State files (`pricelog.json`,
-`traderstock.json`) on the server are never touched**, so the live market
-survives a redeploy. To wipe state and start the market fresh, delete those two
-files on the box and restart: `rm /opt/shonei/pricelog.json /opt/shonei/traderstock.json && systemctl restart shonei`.
+binary + `traders.json`, and restarts. **Runtime state on the server is never
+touched** — `pricelog.json`, `traderstock.json`, `accounts.json`, and
+`shonei.env` are not uploaded — so the live market and registered accounts
+survive a redeploy. To wipe market state, delete the first two and restart:
+`rm /opt/shonei/pricelog.json /opt/shonei/traderstock.json && systemctl restart shonei`
+(leave `accounts.json` alone unless you mean to drop all accounts).
 
 ## Unity client
 
@@ -134,8 +162,13 @@ wss://market.anita.garden/ws?name=PlayerName
 
 ## Notes / future
 
-- **No auth.** Anyone with the URL can connect under any name and place orders.
-  Fine for trusted friends on an unadvertised subdomain; if it ever matters, add
-  a shared-secret `?key=` check in `serveWs` and reject mismatches.
-- **Backups.** Not enabled (Hetzner backups are a ~20% surcharge). The only state
-  is the two JSON files — `scp` them down occasionally if you want a copy.
+- **Auth.** Username/password accounts (`auth.go`): `POST /register` and
+  `POST /login` (JSON `{username, password}`) return an HMAC-signed token; the WS
+  handshake takes `?token=` instead of `?name=`. Tokens are stateless — they
+  can't be revoked before their 30-day expiry. Player names that collide with NPC
+  traders are reserved. See `plans/account-system.md` for the full roadmap (this
+  is Phase 0; client login UI + account-owned saves are later phases).
+- **Backups.** Not enabled (Hetzner backups are a ~20% surcharge). State is now
+  `pricelog.json`, `traderstock.json`, and `accounts.json` (password hashes) —
+  `scp` them down occasionally. **Revisit before account-owned saves ship** (real
+  player data on a box with no backups).

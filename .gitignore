@@ -3,3 +3,8 @@ pricelog.json
 pricelog.json.tmp
 traderstock.json
 traderstock.json.tmp
+
+# Account store (password hashes) + HMAC signing secret — never commit
+accounts.json
+accounts.json.tmp
+shonei.env
